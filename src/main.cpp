@@ -55,7 +55,6 @@ void callback(char* topic, byte* payload, int length) {
 
 WiFiClientSecure espClient;
 PubSubClient client(AWS_endpoint, 8883, callback, espClient);
-long lastMsg = 0;
 
 void updateStateColor(const char* color) {
   setLEDs(color);
@@ -179,10 +178,11 @@ void reconnect() {
     // Attempt to connect
     if (client.connect("ESPthing")) {
       Serial.println("connected");
-      // Once connected, publish an announcement...
-      // client.publish("outTopic", "hello world");
-      // ... and resubscribe
+      // Once connected, subscribe to shadow updates
       client.subscribe("$aws/things/led-lightstrip-1/shadow/update/delta");
+      client.subscribe("$aws/things/led-lightstrip-1/shadow/get/accepted");
+      // Request the device shadow state
+      client.publish("$aws/things/led-lightstrip-1/shadow/get", "");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -206,8 +206,6 @@ void setup() {
 
   setup_wifi();
   reconnect();
-  client.subscribe("$aws/things/led-lightstrip-1/shadow/get/accepted");
-  client.publish("$aws/things/led-lightstrip-1/shadow/get", "");
 }
 
 void loop() {
@@ -215,11 +213,4 @@ void loop() {
     reconnect();
   }
   client.loop();
-
-  long now = millis();
-  if (now - lastMsg > 30000) {
-    // Serial.println("publishing message");
-    // client.publish("$aws/things/led-lightstrip-1/shadow/get", "");
-    lastMsg = now;
-  }
 }
