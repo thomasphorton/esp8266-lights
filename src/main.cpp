@@ -11,7 +11,7 @@
 #include "FastLED.h"
 using namespace std;
 
-#define NUM_LEDS 100
+#define NUM_LEDS 10
 CRGB leds[NUM_LEDS];
 
 const char* ssid = SECRET_SSID;
@@ -21,8 +21,7 @@ const char* AWS_endpoint = AWS_ENDPOINT;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
-void setLEDs(char rgb[]) {
-
+void setLEDs(const char rgb[]) {
   unsigned long int hexColor = strtoul(rgb, NULL, 16);
 
   for (int i = 0; i < NUM_LEDS; i++) {
@@ -40,21 +39,15 @@ void callback(char* topic, byte* payload, int length) {
   Serial.print(topic);
   Serial.print("] ");
 
-  StaticJsonDocument<512> doc;
-  deserializeJson(doc, payload, length);
+  StaticJsonDocument<512> msg;
+  deserializeJson(msg, payload, length);
 
   if (regex_match(topic, regex(".*/shadow/update/delta"))) {
-    Serial.println("");
-    Serial.print("match");
-    
-    handleShadowUpdateDelta(topic, doc);
+    handleShadowUpdateDelta(topic, msg);
   }
 
   if (regex_match(topic, regex(".*/shadow/get/accepted"))) {
-    Serial.println("");
-    Serial.print("match");
-    
-    handleShadowGetAccepted(topic, doc);
+    handleShadowGetAccepted(topic, msg);
   }
 
   Serial.println("");
@@ -64,19 +57,15 @@ WiFiClientSecure espClient;
 PubSubClient client(AWS_endpoint, 8883, callback, espClient);
 long lastMsg = 0;
 
-void handleShadowUpdateDelta(char* topic, StaticJsonDocument<512> doc) {
-
-  const char* state_desired_color = doc["state"]["color"];
-
-  char * desired_color = strdup(state_desired_color);
-  setLEDs(desired_color);
+void updateStateColor(const char* color) {
+  setLEDs(color);
 
   const size_t capacity = 3*JSON_OBJECT_SIZE(1);
   DynamicJsonDocument updateDoc(capacity);
 
   JsonObject state = updateDoc.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
-  state_reported["color"] = state_desired_color;
+  state_reported["color"] = color;
 
   char updateBuffer[512];
   serializeJson(updateDoc, updateBuffer);
@@ -84,24 +73,14 @@ void handleShadowUpdateDelta(char* topic, StaticJsonDocument<512> doc) {
   client.publish("$aws/things/led-lightstrip-1/shadow/update", updateBuffer);
 }
 
-void handleShadowGetAccepted(char* topic, StaticJsonDocument<512> doc)  {
+void handleShadowUpdateDelta(char* topic, StaticJsonDocument<512> msg) {
+  const char* color = msg["state"]["color"];
+  updateStateColor(color);
+}
 
-  const char* state_desired_color = doc["state"]["desired"]["color"];
-
-  char * desired_color = strdup(state_desired_color);
-  setLEDs(desired_color);
-
-  const size_t capacity = 3*JSON_OBJECT_SIZE(1);
-  DynamicJsonDocument updateDoc(capacity);
-
-  JsonObject state = updateDoc.createNestedObject("state");
-  JsonObject state_reported = state.createNestedObject("reported");
-  state_reported["color"] = state_desired_color;
-
-  char updateBuffer[512];
-  serializeJson(updateDoc, updateBuffer);
-
-  client.publish("$aws/things/led-lightstrip-1/shadow/update", updateBuffer);
+void handleShadowGetAccepted(char* topic, StaticJsonDocument<512> msg)  {
+  const char* color = msg["state"]["desired"]["color"];
+  updateStateColor(color);
 }
 
 void setup_wifi() {
