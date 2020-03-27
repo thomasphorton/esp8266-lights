@@ -11,7 +11,7 @@
 #include "FastLED.h"
 using namespace std;
 
-#define NUM_LEDS 10
+#define NUM_LEDS 150
 CRGB leds[NUM_LEDS];
 
 const char* ssid = SECRET_SSID;
@@ -21,29 +21,39 @@ const char* AWS_endpoint = AWS_ENDPOINT;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
-void setLEDs(const char rgb[]) {
+void setLEDs(const char rgb[], int n) {
   unsigned long int hexColor = strtoul(rgb, NULL, 16);
 
   for (int i = 0; i < NUM_LEDS; i++) {
-    leds[i] = hexColor;
+    if (i < n) {
+      leds[i] = hexColor;
+    }
+    else {
+      leds[i] = 0x000000;
+    }
   }
 
   FastLED.show();
 }
 
-void handleShadowUpdateDelta(char* topic, StaticJsonDocument<512> doc);
 void handleShadowGetAccepted(char* topic, StaticJsonDocument<512> doc);
+void handleShadowUpdateAccepted(char* topic, StaticJsonDocument<512> doc);
 
 void callback(char* topic, byte* payload, int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
 
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
   StaticJsonDocument<512> msg;
   deserializeJson(msg, payload, length);
 
-  if (regex_match(topic, regex(".*/shadow/update/delta"))) {
-    handleShadowUpdateDelta(topic, msg);
+  if (regex_match(topic, regex(".*/shadow/update/accepted"))) {
+    handleShadowUpdateAccepted(topic, msg);
   }
 
   if (regex_match(topic, regex(".*/shadow/get/accepted"))) {
@@ -56,15 +66,16 @@ void callback(char* topic, byte* payload, int length) {
 WiFiClientSecure espClient;
 PubSubClient client(AWS_endpoint, 8883, callback, espClient);
 
-void updateStateColor(const char* color) {
-  setLEDs(color);
+void updateStateColor(const char* color, int n) {
+  setLEDs(color, n);
 
-  const size_t capacity = 3*JSON_OBJECT_SIZE(1);
+  const size_t capacity = 3*JSON_OBJECT_SIZE(2);
   DynamicJsonDocument updateDoc(capacity);
 
   JsonObject state = updateDoc.createNestedObject("state");
   JsonObject state_reported = state.createNestedObject("reported");
   state_reported["color"] = color;
+  state_reported["number"] = n;
 
   char updateBuffer[512];
   serializeJson(updateDoc, updateBuffer);
@@ -72,14 +83,20 @@ void updateStateColor(const char* color) {
   client.publish("$aws/things/led-lightstrip-1/shadow/update", updateBuffer);
 }
 
-void handleShadowUpdateDelta(char* topic, StaticJsonDocument<512> msg) {
-  const char* color = msg["state"]["color"];
-  updateStateColor(color);
+void handleShadowGetAccepted(char* topic, StaticJsonDocument<512> msg)  {
+  if (msg["state"]["desired"]) {
+    const char* color = msg["state"]["desired"]["color"];
+    int n = msg["state"]["desired"]["number"];
+    setLEDs(color, n);
+  }
 }
 
-void handleShadowGetAccepted(char* topic, StaticJsonDocument<512> msg)  {
-  const char* color = msg["state"]["desired"]["color"];
-  updateStateColor(color);
+void handleShadowUpdateAccepted(char* topic, StaticJsonDocument<512> msg) {
+  if (msg["state"]["desired"]) {
+    const char* color = msg["state"]["desired"]["color"];
+    int n = msg["state"]["desired"]["number"];
+    updateStateColor(color, n);
+  }
 }
 
 void setup_wifi() {
@@ -97,6 +114,8 @@ void setup_wifi() {
     Serial.print(".");
   }
 
+  setLEDs("00FF00", 1);
+
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
@@ -113,6 +132,7 @@ void setup_wifi() {
 
   if (!SPIFFS.begin()) {
     Serial.println("Failed to mount file system");
+    setLEDs("FF0000", 2);
     return;
   }
 
@@ -120,6 +140,7 @@ void setup_wifi() {
   File cert = SPIFFS.open("/cert.der", "r");
   if (!cert) {
     Serial.println("Failed to open Cert file");
+    setLEDs("FF0000", 2);
   }
   else {
     Serial.println("Cert file opened");
@@ -132,12 +153,14 @@ void setup_wifi() {
   }
   else {
     Serial.println("Cert failed to load");
+    setLEDs("FF0000", 2);
   }
 
   // Load private key file
   File private_key = SPIFFS.open("/private.der", "r");
   if (!private_key) {
     Serial.println("Failed to open private key file");
+    setLEDs("FF0000", 2);
   }
   else {
     Serial.println("Private key file opened");
@@ -150,12 +173,14 @@ void setup_wifi() {
   }
   else {
     Serial.println("Private key failed to load");
+    setLEDs("FF0000", 2);
   }
 
   // Load CA file
   File ca = SPIFFS.open("/ca.der", "r");
   if (!ca) {
     Serial.println("Failed to open CA file");
+    setLEDs("FF0000", 2);
   }
   else {
     Serial.println("CA file opened");
@@ -168,7 +193,10 @@ void setup_wifi() {
   }
   else {
     Serial.println("CA failed to load");
+    setLEDs("FF0000", 2);
   }
+
+  setLEDs("00FF00", 2);
 }
 
 void reconnect() {
@@ -178,9 +206,11 @@ void reconnect() {
     // Attempt to connect
     if (client.connect("ESPthing")) {
       Serial.println("connected");
+      setLEDs("00FF00", 3);
+
       // Once connected, subscribe to shadow updates
-      client.subscribe("$aws/things/led-lightstrip-1/shadow/update/delta");
       client.subscribe("$aws/things/led-lightstrip-1/shadow/get/accepted");
+      client.subscribe("$aws/things/led-lightstrip-1/shadow/update/accepted");
       // Request the device shadow state
       client.publish("$aws/things/led-lightstrip-1/shadow/get", "");
     } else {
@@ -193,6 +223,7 @@ void reconnect() {
       Serial.print("WiFiClientSecure SSL error: ");
       Serial.println(buf);
 
+      setLEDs("FF0000", 3);
       // Wait 5 seconds before retrying
       delay(5000);
     }
@@ -202,7 +233,9 @@ void reconnect() {
 void setup() {
   Serial.begin(9600);
   Serial.setDebugOutput(true);
-  FastLED.addLeds<WS2812B, 5>(leds, NUM_LEDS);
+  FastLED.addLeds<WS2812B, 5, GRB>(leds, NUM_LEDS);
+
+  setLEDs("000000", 0);
 
   setup_wifi();
   reconnect();
