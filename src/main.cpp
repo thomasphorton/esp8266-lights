@@ -1,4 +1,3 @@
-#include "secrets.h"
 #include <string>
 #include <regex>
 #include <Arduino.h>
@@ -14,12 +13,40 @@ using namespace std;
 #define NUM_LEDS 150
 CRGB leds[NUM_LEDS];
 
-const char* ssid = SECRET_SSID;
-const char* password = SECRET_PASS;
-const char* AWS_endpoint = AWS_ENDPOINT;
-
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
+
+struct Config {
+  char wifi_ssid[64];
+  char wifi_password[64];
+  char aws_iot_endpoint[64];
+  char thing_name[64];
+};
+
+Config config;
+
+void loadConfiguration(Config &config) {
+  File config_file = SPIFFS.open("/config.json", "r");
+  if (!config_file) {
+    Serial.println("Failed to open config file");
+  }
+  else {
+    Serial.println("Config file opened");
+  }
+
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, config_file);
+  if (error) {
+    Serial.println("Failed to read config file");
+  }
+
+  strlcpy(config.wifi_ssid, doc["wifi_ssid"], sizeof(config.wifi_ssid));
+  strlcpy(config.wifi_password, doc["wifi_password"], sizeof(config.wifi_password));
+  strlcpy(config.aws_iot_endpoint, doc["aws_iot_endpoint"], sizeof(config.aws_iot_endpoint));
+  strlcpy(config.thing_name, doc["thing_name"], sizeof(config.thing_name));
+
+  config_file.close();
+}
 
 void setLEDs(const char rgb[], int n) {
   unsigned long int hexColor = strtoul(rgb, NULL, 16);
@@ -64,7 +91,7 @@ void callback(char* topic, byte* payload, int length) {
 }
 
 WiFiClientSecure espClient;
-PubSubClient client(AWS_endpoint, 8883, callback, espClient);
+PubSubClient client(config.aws_iot_endpoint, 8883, callback, espClient);
 
 void updateStateColor(const char* color, int n) {
   setLEDs(color, n);
@@ -105,9 +132,9 @@ void setup_wifi() {
   espClient.setBufferSizes(512, 512);
   Serial.println();
   Serial.print("Connecting to ");
-  Serial.println(ssid);
+  Serial.println(config.wifi_ssid);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(config.wifi_ssid, config.wifi_password);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -129,12 +156,6 @@ void setup_wifi() {
   espClient.setX509Time(timeClient.getEpochTime());
 
   delay(200);
-
-  if (!SPIFFS.begin()) {
-    Serial.println("Failed to mount file system");
-    setLEDs("FF0000", 2);
-    return;
-  }
 
   // Load certificate file
   File cert = SPIFFS.open("/cert.der", "r");
@@ -237,6 +258,13 @@ void setup() {
 
   setLEDs("000000", 0);
 
+  if (!SPIFFS.begin()) {
+    Serial.println("Failed to mount file system");
+    setLEDs("FF0000", 2);
+    return;
+  }
+
+  loadConfiguration(config);
   setup_wifi();
   reconnect();
 }
@@ -245,5 +273,6 @@ void loop() {
   if (!client.connected()) {
     reconnect();
   }
+
   client.loop();
 }
